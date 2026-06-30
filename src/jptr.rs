@@ -7,6 +7,8 @@
 
 use serde_json::Value;
 
+use crate::common::decode_uri_component;
+
 /// Escape a path component for use in a JSON pointer.
 ///
 /// `~` becomes `~0` and `/` becomes `~1`.
@@ -47,27 +49,6 @@ fn components(prop: &str) -> Result<Option<Vec<String>>, ()> {
 
     let prop = prop.strip_prefix('/').unwrap_or(&prop);
     Ok(Some(prop.split('/').map(jpunescape).collect()))
-}
-
-/// Minimal `decodeURIComponent`, decoding `%XX` byte escapes as UTF-8.
-fn decode_uri_component(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hi = (bytes[i + 1] as char).to_digit(16);
-            let lo = (bytes[i + 2] as char).to_digit(16);
-            if let (Some(hi), Some(lo)) = (hi, lo) {
-                out.push((hi * 16 + lo) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Whether a component selects an array element by index.

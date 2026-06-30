@@ -7,6 +7,7 @@
 
 use serde_json::{Map, Value};
 
+use crate::common::truthy;
 use crate::error::{warn_or_error, S2OError};
 use crate::options::Options;
 use crate::schema_walker::walk_schema;
@@ -251,15 +252,4 @@ fn obj(schema: &mut Value) -> &mut Map<String, Value> {
         *schema = Value::Object(Map::new());
     }
     schema.as_object_mut().unwrap()
-}
-
-/// JavaScript truthiness for an optional value.
-fn truthy(v: Option<&Value>) -> bool {
-    match v {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Null) | None => false,
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(true),
-        Some(_) => true,
-    }
 }

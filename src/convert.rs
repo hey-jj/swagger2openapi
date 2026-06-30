@@ -8,8 +8,8 @@
 use serde_json::{Map, Value};
 
 use crate::common::{
-    self, hash, sanitise, sanitise_all, to_camel_case, ARRAY_PROPERTIES, HTTP_METHODS,
-    PARAMETER_TYPE_PROPERTIES,
+    self, decode_uri_component as decode_uri, encode_uri_component, hash, sanitise, sanitise_all,
+    to_camel_case, truthy, ARRAY_PROPERTIES, HTTP_METHODS, PARAMETER_TYPE_PROPERTIES,
 };
 use crate::error::{warn_or_error, S2OError};
 use crate::fixup::fix_up_schema;
@@ -35,17 +35,6 @@ fn as_object_mut(v: &mut Value) -> &mut Map<String, Value> {
         *v = empty_object();
     }
     v.as_object_mut().unwrap()
-}
-
-/// Whether a value is JavaScript-truthy.
-fn truthy(v: Option<&Value>) -> bool {
-    match v {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Null) | None => false,
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(true),
-        Some(Value::Array(_)) | Some(Value::Object(_)) => true,
-    }
 }
 
 /// Read a nested string value.
@@ -1010,33 +999,12 @@ fn merge_form_properties(op: &mut Value, result: &Value, ct: &str) {
     }
 }
 
-/// Minimal `decodeURIComponent` for already-fragment-free strings.
-fn decode_uri(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hi = (bytes[i + 1] as char).to_digit(16);
-            let lo = (bytes[i + 2] as char).to_digit(16);
-            if let (Some(hi), Some(lo)) = (hi, lo) {
-                out.push((hi * 16 + lo) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
 // --- responses -----------------------------------------------------------
 
 /// Convert a 2.0 response into 3.0 shape.
 ///
-/// `produces` is the precomputed media-type list. `op_produces_string` is set
-/// when the operation carried a string `produces` that must be wrapped.
+/// `op` is the owning operation, read to compute the media types for the
+/// `content` map via [`compute_produces`].
 fn process_response(
     response: &mut Value,
     op: Option<&mut Value>,
@@ -1584,25 +1552,6 @@ fn dedupe_refs(openapi: &mut Value, refmap: &Map<String, Value>) {
             jptr::set(openapi, src, Value::Object(ref_obj));
         }
     }
-}
-
-/// Minimal `encodeURIComponent` for component-name building.
-fn encode_uri_component(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for byte in s.bytes() {
-        let keep = byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
-            );
-        if keep {
-            out.push(byte as char);
-        } else {
-            out.push('%');
-            out.push_str(&format!("{byte:02X}"));
-        }
-    }
-    out
 }
 
 // --- paths ---------------------------------------------------------------

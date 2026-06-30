@@ -1,8 +1,11 @@
 //! String helpers, the 32-bit hash, and the constant tables.
 //!
 //! These match the small set of helpers the converter relies on: name
-//! sanitisation, a JavaScript-compatible string hash, camel casing, and the
-//! property name tables that drive parameter and schema fixups.
+//! sanitisation, a JavaScript-compatible string hash, camel casing, percent
+//! encode and decode, JavaScript truthiness, and the property name tables that
+//! drive parameter and schema fixups.
+
+use serde_json::Value;
 
 /// Properties that move from a 2.0 parameter or header onto its schema.
 pub const PARAMETER_TYPE_PROPERTIES: &[&str] = &[
@@ -121,6 +124,58 @@ pub fn to_camel_case(s: &str) -> String {
         }
     }
     out
+}
+
+/// Minimal `encodeURIComponent`, escaping every byte outside the unreserved
+/// set and the marks `! ~ * ' ( )`.
+pub fn encode_uri_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        let keep = byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            );
+        if keep {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push_str(&format!("{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Minimal `decodeURIComponent`, decoding `%XX` byte escapes as UTF-8.
+pub fn decode_uri_component(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether a value is JavaScript-truthy.
+pub fn truthy(v: Option<&Value>) -> bool {
+    match v {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Null) | None => false,
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(true),
+        Some(Value::Array(_)) | Some(Value::Object(_)) => true,
+    }
 }
 
 /// Keep only first occurrences, preserving order.

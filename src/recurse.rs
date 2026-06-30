@@ -10,6 +10,7 @@
 
 use serde_json::Value;
 
+use crate::common::encode_uri_component;
 use crate::jptr::jpescape;
 
 /// Per-visit state passed to the recurse callback.
@@ -67,28 +68,6 @@ fn get_child_mut<'a>(object: &'a mut Value, key: &str) -> Option<&'a mut Value> 
         Value::Array(arr) => key.parse::<usize>().ok().and_then(move |i| arr.get_mut(i)),
         _ => None,
     }
-}
-
-/// Minimal `encodeURIComponent` for path building.
-///
-/// Encodes the bytes that `encodeURIComponent` escapes, leaving the unreserved
-/// set and the few extra marks it keeps.
-fn encode_uri_component(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for byte in s.bytes() {
-        let keep = byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
-            );
-        if keep {
-            out.push(byte as char);
-        } else {
-            out.push('%');
-            out.push_str(&format!("{byte:02X}"));
-        }
-    }
-    out
 }
 
 /// Whether `key` is `$ref` and `obj[key]` is a string.
