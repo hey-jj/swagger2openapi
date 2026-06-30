@@ -14,5 +14,6 @@ categories = ["api-bindings", "encoding", "parsing"]
 # $ref relocation paths depend on.
 serde_json = { version = "1", features = ["preserve_order"] }
 # YAML parse and serialize for the string, file, and stream entry points and for
-# reading external $ref targets during resolution.
-serde_yaml = "0.9"
+# reading external $ref targets during resolution. serde_yaml_ng is a maintained
+# YAML crate with the same API, imported under the serde_yaml name.
+serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
