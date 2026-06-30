@@ -8,7 +8,7 @@ use std::io::Cursor;
 
 use serde_json::{json, Value};
 use swagger2openapi::{
-    convert_file, convert_obj, convert_str, convert_stream, options::RefSiblings, Options,
+    convert_file, convert_obj, convert_str, convert_stream, Options, RefSiblings,
 };
 
 /// Minimal valid Swagger 2.0 document as a value.
@@ -41,14 +41,14 @@ fn convert_str_accepts_yaml() {
 fn convert_str_rejects_garbage() {
     let mut options = Options::new();
     let err = convert_str("\t this: : is: not: yaml: [", &mut options).unwrap_err();
-    assert_eq!(err.name(), "S2OError");
+    assert!(!err.message.is_empty());
 }
 
 #[test]
 fn convert_file_missing_is_error() {
     let mut options = Options::new();
     let err = convert_file("/no/such/file.yaml", &mut options).unwrap_err();
-    assert_eq!(err.name(), "S2OError");
+    assert!(err.message.contains("/no/such/file.yaml"));
 }
 
 #[test]

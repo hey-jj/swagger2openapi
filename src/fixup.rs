@@ -7,7 +7,7 @@
 
 use serde_json::{Map, Value};
 
-use crate::error::{throw_or_warn, S2OError};
+use crate::error::{warn_or_error, S2OError};
 use crate::options::Options;
 use crate::schema_walker::walk_schema;
 
@@ -220,7 +220,7 @@ fn fix_type_array(schema: &mut Value, options: &mut Options) -> Result<(), S2OEr
             obj(schema).insert("type".to_string(), ty);
         }
         if first.as_object().map(Map::len).unwrap_or(0) > 1 {
-            throw_or_warn("Lost properties from oneOf", schema, options)?;
+            warn_or_error("Lost properties from oneOf", schema, options)?;
         }
         obj(schema).remove("oneOf");
     } else {

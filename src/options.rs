@@ -23,10 +23,14 @@ pub enum RefSiblings {
 
 /// Inputs and outputs for a conversion run.
 ///
-/// Fields are filled in as the converter and the test harness mature. The
-/// struct is mutated in place during conversion.
+/// The struct holds three kinds of field, kept apart below: inputs the caller
+/// sets before a run, outputs the converter writes for the caller to read, and
+/// internal scratch the converter uses during a run. The entry points mutate it
+/// in place. The caller sets the inputs, then reads `openapi` and the other
+/// outputs after the call returns.
 #[derive(Debug, Default)]
 pub struct Options {
+    // --- inputs: set these before calling an entry point ---
     /// Repair small patchable errors instead of returning an error.
     pub patch: bool,
     /// Never error on non-patchable problems. Write a warning extension into
@@ -55,13 +59,17 @@ pub struct Options {
     pub anchors: bool,
     /// Return the bare `openapi` document instead of the options bag.
     pub direct: bool,
-    /// The converted output document.
+    /// File read encoding. Only `utf8` is supported.
+    pub encoding: Option<String>,
+
+    // --- outputs: read these after the call returns ---
+    /// The converted OpenAPI 3.0 document. This is the conversion result.
     pub openapi: Value,
     /// Count of patches applied.
     pub patches: u64,
-    /// File read encoding. Only `utf8` is supported.
-    pub encoding: Option<String>,
-    /// Textual source recorded during conversion.
+    /// Textual source recorded during conversion. The string entry points set
+    /// it from the source text. `convert_obj` sets it to the YAML form of the
+    /// input value when no entry point set it first.
     pub text: String,
     /// Set when the input parsed as YAML rather than JSON.
     pub source_yaml: bool,
@@ -69,11 +77,14 @@ pub struct Options {
     pub source_file: Option<String>,
     /// The `$ref` rewrite map produced during conversion.
     pub refmap: Value,
+
+    // --- internal: set and read by the converter, not by callers ---
     /// Set by YAML entry points when the source used an anchor and alias.
     ///
     /// The converter rejects anchors unless `anchors` is set. The parsed value
     /// no longer carries the shared identity, so the flag preserves the signal.
-    pub had_anchors: bool,
+    /// Private to the crate so a caller cannot forge the anchor signal.
+    pub(crate) had_anchors: bool,
 }
 
 impl Options {

@@ -16,15 +16,13 @@ use crate::jptr::jpescape;
 pub struct RecurseState {
     /// JSON-pointer-ish path to the current key, built with `#/a/b`.
     pub path: String,
-    /// Depth of the container, starting at 0 for the root.
-    pub depth: usize,
 }
 
 /// Visit every property of `object` depth first.
 ///
-/// `state` carries the path of the parent. Pass a fresh state with `path` set to
-/// `"#"` and `depth` 0 to start at the document root.
-pub fn recurse<F>(object: &mut Value, parent_path: &str, depth: usize, callback: &mut F)
+/// `parent_path` is the path of the container. Pass `"#"` to start at the
+/// document root.
+pub fn recurse<F>(object: &mut Value, parent_path: &str, callback: &mut F)
 where
     F: FnMut(&mut Value, &str, &RecurseState),
 {
@@ -40,17 +38,14 @@ where
             continue;
         }
         let path = format!("{}/{}", parent_path, encode_uri_component(&jpescape(&key)));
-        let state = RecurseState {
-            path: path.clone(),
-            depth,
-        };
+        let state = RecurseState { path: path.clone() };
         callback(object, &key, &state);
 
         // Re-read after the callback, which may have replaced or removed the
         // value or even the container itself.
         if let Some(child) = get_child_mut(object, &key) {
             if child.is_object() || child.is_array() {
-                recurse(child, &path, depth + 1, callback);
+                recurse(child, &path, callback);
             }
         }
     }
@@ -120,7 +115,7 @@ mod tests {
             }
         });
         let mut seen: Vec<(String, String)> = Vec::new();
-        recurse(&mut input, "#", 0, &mut |_obj, key, state| {
+        recurse(&mut input, "#", &mut |_obj, key, state| {
             seen.push((key.to_string(), state.path.clone()));
         });
         assert_eq!(seen.len(), 8);
@@ -138,7 +133,7 @@ mod tests {
     fn does_not_traverse_scalars() {
         let mut calls = 0;
         for mut v in [json!("hello"), json!(true), json!(1), json!(null)] {
-            recurse(&mut v, "#", 0, &mut |_, _, _| calls += 1);
+            recurse(&mut v, "#", &mut |_, _, _| calls += 1);
         }
         assert_eq!(calls, 0);
     }
@@ -147,14 +142,14 @@ mod tests {
     fn traverses_arrays() {
         let mut calls = 0;
         let mut v = json!([0, 1, 2]);
-        recurse(&mut v, "#", 0, &mut |_, _, _| calls += 1);
+        recurse(&mut v, "#", &mut |_, _, _| calls += 1);
         assert_eq!(calls, 3);
     }
 
     #[test]
     fn callback_can_delete() {
         let mut v = json!({ "a": 1, "b": 2 });
-        recurse(&mut v, "#", 0, &mut |obj, key, _| {
+        recurse(&mut v, "#", &mut |obj, key, _| {
             if key == "a" {
                 obj.as_object_mut().unwrap().remove("a");
             }

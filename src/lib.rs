@@ -7,42 +7,36 @@
 //! and `host`/`basePath`/`schemes` become `servers`. Non-compliant JSON Schema
 //! constructs are repaired in place.
 //!
-//! The [`Options`] struct carries both inputs and outputs and is mutated as the
-//! conversion runs. Errors surface as [`S2OError`].
+//! # Entry points
 //!
-//! # Layout
+//! - [`convert_obj`] and its alias [`convert`] take a parsed value.
+//! - [`convert_str`] parses JSON or YAML text first.
+//! - [`convert_file`] reads a path, [`convert_stream`] drains a reader.
 //!
-//! - [`error`]: the [`S2OError`] type and the throw-or-warn policy.
-//! - [`options`]: the [`Options`] input and output bag.
-//! - [`common`]: string helpers, the 32-bit hash, and the constant tables.
-//! - [`jptr`]: RFC 6901 JSON pointer get and set over a [`serde_json::Value`].
-//! - [`recurse`]: order-preserving depth-first traversal with path state.
-//! - [`clone`]: deep clone helpers.
-//! - [`schema_walker`]: schema and subschema traversal.
-//! - [`fixup`]: JSON Schema repair passes.
-//! - [`status_codes`]: HTTP status reason phrases.
-//! - [`convert`]: the conversion orchestration and the process helpers.
-//! - [`resolver`]: optional external and internal `$ref` resolution.
+//! Each writes the result into [`Options::openapi`] and returns `Result<(),
+//! S2OError>`. [`Options`] also carries the input flags and the conversion
+//! outputs such as the patch count and the `$ref` rewrite map.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-pub mod clone;
-pub mod common;
-pub mod convert;
-pub mod error;
-pub mod fixup;
-pub mod jptr;
-pub mod options;
-pub mod recurse;
-pub mod resolver;
-pub mod schema_walker;
-pub mod status_codes;
-pub mod yaml;
+pub(crate) mod common;
+pub(crate) mod convert;
+pub(crate) mod error;
+pub(crate) mod fixup;
+pub(crate) mod jptr;
+pub(crate) mod options;
+pub(crate) mod recurse;
+pub(crate) mod resolver;
+pub(crate) mod schema_walker;
+pub(crate) mod yaml;
+
+#[cfg(test)]
+mod corpus_tests;
 
 pub use convert::convert_obj;
 pub use error::S2OError;
-pub use options::Options;
+pub use options::{Options, RefSiblings};
 
 use serde_json::Value;
 

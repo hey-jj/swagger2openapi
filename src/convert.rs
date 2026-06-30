@@ -7,12 +7,11 @@
 
 use serde_json::{Map, Value};
 
-use crate::clone::clone;
 use crate::common::{
     self, hash, sanitise, sanitise_all, to_camel_case, ARRAY_PROPERTIES, HTTP_METHODS,
     PARAMETER_TYPE_PROPERTIES,
 };
-use crate::error::{throw_or_warn, S2OError};
+use crate::error::{warn_or_error, S2OError};
 use crate::fixup::fix_up_schema;
 use crate::jptr::{self, jpescape};
 use crate::options::Options;
@@ -204,7 +203,7 @@ fn process_header(header: &mut Value, options: &mut Options) -> Result<(), S2OEr
             .and_then(|i| get_str(i, "collectionFormat"))
             .map(str::to_string);
         if items_cf != header_cf {
-            throw_or_warn(
+            warn_or_error(
                 "Nested collectionFormats are not supported",
                 header,
                 options,
@@ -218,12 +217,12 @@ fn process_header(header: &mut Value, options: &mut Options) -> Result<(), S2OEr
     if header_type.as_deref() == Some("array") {
         let cf = get_str(header, "collectionFormat").map(str::to_string);
         match cf.as_deref() {
-            Some("ssv") => throw_or_warn(
+            Some("ssv") => warn_or_error(
                 "collectionFormat:ssv is no longer supported for headers",
                 header,
                 options,
             )?,
-            Some("pipes") => throw_or_warn(
+            Some("pipes") => warn_or_error(
                 "collectionFormat:pipes is no longer supported for headers",
                 header,
                 options,
@@ -232,7 +231,7 @@ fn process_header(header: &mut Value, options: &mut Options) -> Result<(), S2OEr
                 as_object_mut(header).insert("explode".into(), Value::Bool(true));
             }
             Some("tsv") => {
-                throw_or_warn(
+                warn_or_error(
                     "collectionFormat:tsv is no longer supported",
                     header,
                     options,
@@ -290,7 +289,7 @@ fn fix_param_ref(param: &mut Value, options: &mut Options) -> Result<(), S2OErro
         as_object_mut(param).insert("$ref".into(), Value::String(new));
     }
     if ref_str.contains("#/definitions/") {
-        throw_or_warn("Definition used as parameter", param, options)?;
+        warn_or_error("Definition used as parameter", param, options)?;
     }
     Ok(())
 }
@@ -354,11 +353,9 @@ fn effective_consumes(op: Option<&Value>, openapi: &Value) -> Vec<String> {
 /// `consumes` is the precomputed media-type list. `openapi` is read only, used
 /// to resolve internal parameter `$ref`s. Returns nothing; mutations land on
 /// `param` and `op`.
-#[allow(clippy::too_many_arguments)]
 fn process_parameter(
     param: &mut Value,
     mut op: Option<&mut Value>,
-    method: Option<&str>,
     index: &str,
     openapi: &Value,
     consumes: &[String],
@@ -407,7 +404,7 @@ fn process_parameter(
             let new_param = jptr::get(openapi, &ref_str).cloned();
             match new_param {
                 None if ref_str.starts_with("#/") => {
-                    throw_or_warn(
+                    warn_or_error(
                         format!("Could not resolve reference {ref_str}"),
                         param,
                         options,
@@ -472,7 +469,6 @@ fn process_parameter(
         }
     }
 
-    let _ = method;
     Ok(())
 }
 
@@ -587,7 +583,7 @@ fn convert_collection_format(param: &mut Value, options: &mut Options) -> Result
             if in_query {
                 as_object_mut(param).insert("style".into(), Value::String("spaceDelimited".into()));
             } else {
-                throw_or_warn(
+                warn_or_error(
                     "collectionFormat:ssv is no longer supported except for in:query parameters",
                     param,
                     options,
@@ -598,7 +594,7 @@ fn convert_collection_format(param: &mut Value, options: &mut Options) -> Result
             if in_query {
                 as_object_mut(param).insert("style".into(), Value::String("pipeDelimited".into()));
             } else {
-                throw_or_warn(
+                warn_or_error(
                     "collectionFormat:pipes is no longer supported except for in:query parameters",
                     param,
                     options,
@@ -609,7 +605,7 @@ fn convert_collection_format(param: &mut Value, options: &mut Options) -> Result
             as_object_mut(param).insert("explode".into(), Value::Bool(true));
         }
         "tsv" => {
-            throw_or_warn(
+            warn_or_error(
                 "collectionFormat:tsv is no longer supported",
                 param,
                 options,
@@ -634,7 +630,7 @@ fn convert_type_to_schema(param: &mut Value, options: &mut Options) -> Result<()
     }
 
     if param.get("items").is_some() && param.get("schema").is_some() {
-        throw_or_warn("parameter has array,items and schema", param, options)?;
+        warn_or_error("parameter has array,items and schema", param, options)?;
         return Ok(());
     }
 
@@ -679,7 +675,7 @@ fn strip_nested_collection_format(
     options: &mut Options,
 ) -> Result<(), S2OError> {
     let mut conflict = false;
-    recurse(node, "#", 0, &mut |obj, key, _| {
+    recurse(node, "#", &mut |obj, key, _| {
         if key == "collectionFormat" {
             if let Some(Value::String(v)) = obj.get(key) {
                 if let Some(old) = old_cf {
@@ -694,7 +690,7 @@ fn strip_nested_collection_format(
         }
     });
     if conflict {
-        throw_or_warn(
+        warn_or_error(
             "Nested collectionFormats are not supported",
             warn_target,
             options,
@@ -813,8 +809,7 @@ fn build_file_body(param: &Value, result: &mut Value) {
     let mut content = Map::new();
     content.insert("application/octet-stream".into(), Value::Object(ct));
     as_object_mut(result).insert("content".into(), Value::Object(content));
-    let result_clone = param.clone();
-    copy_extensions(&result_clone, result);
+    copy_extensions(param, result);
 }
 
 /// Build a request body from a `body` parameter into `result`.
@@ -871,7 +866,7 @@ fn build_body_request_body(
 
     let schema = param.get("schema").cloned().unwrap_or_else(empty_object);
     for mimetype in &consumes {
-        let mut cloned_schema = clone(&schema);
+        let mut cloned_schema = schema.clone();
         fix_up_schema(&mut cloned_schema, options)?;
         let mut ct = Map::new();
         ct.insert("schema".into(), cloned_schema);
@@ -880,8 +875,7 @@ fn build_body_request_body(
         }
     }
 
-    let param_clone = param.clone();
-    copy_extensions(&param_clone, result);
+    copy_extensions(param, result);
     Ok(())
 }
 
@@ -898,7 +892,7 @@ fn attach_result_to_op(
             as_object_mut(rb).insert("x-s2o-overloaded".into(), Value::Bool(true));
         }
         let op_id = get_str(op, "operationId").unwrap_or(index).to_string();
-        throw_or_warn(
+        warn_or_error(
             format!("Operation {op_id} has multiple requestBodies"),
             op,
             options,
@@ -1056,7 +1050,7 @@ fn process_response(
     if matches!(response.get("$ref"), Some(Value::String(_))) {
         let ref_str = get_str(response, "$ref").unwrap().to_string();
         if ref_str.contains("#/definitions/") {
-            throw_or_warn(
+            warn_or_error(
                 format!("definition used as response: {ref_str}"),
                 response,
                 options,
@@ -1115,7 +1109,7 @@ fn process_response(
         as_object_mut(response).insert("content".into(), empty_object());
         for mimetype in &produces {
             let mut ct = Map::new();
-            let mut ct_schema = clone(&schema);
+            let mut ct_schema = schema.clone();
             // file type schema becomes binary string.
             if get_str(&ct_schema, "type") == Some("file") {
                 ct_schema = {
@@ -1257,7 +1251,7 @@ struct RefSite {
 fn collect_ref_sites(openapi: &Value) -> Vec<RefSite> {
     let mut sites: Vec<RefSite> = Vec::new();
     let mut doc = openapi.clone();
-    recurse(&mut doc, "#", 0, &mut |obj, key, state| {
+    recurse(&mut doc, "#", &mut |obj, key, state| {
         if is_ref(obj, key) {
             sites.push(RefSite {
                 container_path: parent_of(&state.path),
@@ -1350,17 +1344,17 @@ fn rewrite_single_ref(
         let consumes = openapi.get("consumes").cloned().unwrap_or(Value::Null);
         as_object_mut(container).remove("$ref");
         // Replace the whole container with the consumes array.
-        *container = clone(&consumes);
+        *container = consumes;
     } else if ref_str == "#/produces" {
         let produces = openapi.get("produces").cloned().unwrap_or(Value::Null);
         as_object_mut(container).remove("$ref");
-        *container = clone(&produces);
+        *container = produces;
     } else if let Some(rest) = ref_str.strip_prefix("#/definitions/") {
         let mut keys: Vec<String> = rest.split('/').map(str::to_string).collect();
         let ref0 = jptr::jpunescape(&keys[0]);
         match component_names.schemas.get(&decode_uri(&ref0)) {
             Some(Value::String(new_key)) => keys[0] = new_key.clone(),
-            _ => throw_or_warn(
+            _ => warn_or_error(
                 format!("Could not resolve reference {ref_str}"),
                 container,
                 options,
@@ -1391,7 +1385,7 @@ fn relocate_ref(
 ) -> Result<(), S2OError> {
     let target = jptr::get(openapi, ref_str).cloned();
     let Some(mut target) = target else {
-        throw_or_warn(
+        warn_or_error(
             format!("direct $ref not found {ref_str}"),
             container,
             options,
@@ -1570,7 +1564,7 @@ fn rewrite_odata(
     let mut keys: Vec<String> = stripped.split('/').map(str::to_string).collect();
     match component_names.schemas.get(&decode_uri(&keys[0])) {
         Some(Value::String(new_key)) => keys[0] = new_key.clone(),
-        _ => throw_or_warn(
+        _ => warn_or_error(
             format!("Could not resolve reference {value}"),
             container,
             options,
@@ -1660,7 +1654,7 @@ fn process_paths(
             let Some(param) = path.get_mut("parameters").and_then(|a| a.get_mut(i)) else {
                 continue;
             };
-            process_parameter(param, None, None, &p, openapi, &consumes, options)?;
+            process_parameter(param, None, &p, openapi, &consumes, options)?;
         }
         if !options.debug {
             if let Some(Value::Array(arr)) = path.get_mut("parameters") {
@@ -1753,15 +1747,7 @@ fn process_operation(
                     effective_consumes(op, openapi)
                 };
                 if let Some(op) = path.get_mut(method) {
-                    process_parameter(
-                        &mut param,
-                        Some(op),
-                        Some(method),
-                        p,
-                        openapi,
-                        &consumes,
-                        options,
-                    )?;
+                    process_parameter(&mut param, Some(op), p, openapi, &consumes, options)?;
                     clean_empty_rbname(op, options);
                 }
             }
@@ -1793,15 +1779,7 @@ fn process_operation(
         };
         let mut op_taken = path.get_mut(method).map(std::mem::take);
         if let Some(op) = op_taken.as_mut() {
-            process_parameter(
-                &mut param,
-                Some(op),
-                Some(method),
-                &index,
-                openapi,
-                &consumes,
-                options,
-            )?;
+            process_parameter(&mut param, Some(op), &index, openapi, &consumes, options)?;
             // The op may have been rebuilt; write the processed param back.
             if let Some(params) = op.get_mut("parameters") {
                 if let Some(slot) = params.get_mut(i) {
@@ -1935,7 +1913,7 @@ fn convert_operation_servers(path: &mut Value, method: &str, openapi: &Value) {
         }
         if let Some(servers) = &servers {
             for server in servers {
-                let mut new_server = clone(server);
+                let mut new_server = server.clone();
                 if let Some(url) = get_str(&new_server, "url") {
                     let rebuilt = set_url_scheme(url, scheme.as_str().unwrap_or(""));
                     as_object_mut(&mut new_server).insert("url".into(), Value::String(rebuilt));
@@ -1966,7 +1944,7 @@ fn finalize_operation(
     p: &str,
     method: &str,
     container_name: &str,
-    _openapi: &mut Value,
+    openapi: &mut Value,
     cache: &mut RbCache,
     options: &mut Options,
 ) -> Result<(), S2OError> {
@@ -1982,6 +1960,12 @@ fn finalize_operation(
     as_object_mut(op).remove("consumes");
     as_object_mut(op).remove("produces");
     as_object_mut(op).remove("schemes");
+
+    convert_ms_examples(path, method, openapi);
+
+    let Some(op) = path.get_mut(method) else {
+        return Ok(());
+    };
 
     // Drop an empty parameters array.
     if op
@@ -2025,6 +2009,188 @@ fn finalize_operation(
         cache.entries.get_mut(&rb_hash).unwrap().refs.push(ptr);
     }
     Ok(())
+}
+
+/// Convert Azure `x-ms-examples` into OpenAPI `examples`.
+///
+/// Each example maps its parameter values onto matching op or path parameters,
+/// its response header values onto response headers, and its response body into
+/// `components.examples` with a `$ref` from each response content type. The
+/// `x-ms-examples` member is removed.
+fn convert_ms_examples(path: &mut Value, method: &str, openapi: &mut Value) {
+    let examples = path
+        .get(method)
+        .and_then(|o| o.get("x-ms-examples"))
+        .and_then(Value::as_object)
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<Vec<_>>()
+        });
+    let Some(examples) = examples else {
+        return;
+    };
+    // Detach path-level parameters so the op borrow and the path-param writes do
+    // not overlap. They are reattached after the examples are applied.
+    let mut path_params = path
+        .as_object_mut()
+        .and_then(|m| m.remove("parameters"))
+        .unwrap_or(Value::Null);
+
+    let Some(op) = path.get_mut(method) else {
+        return;
+    };
+
+    for (name, example) in examples {
+        let se = sanitise_all(&name);
+        apply_example_parameters(op, &mut path_params, &name, &example, openapi);
+        apply_example_responses(op, &name, &se, &example, openapi);
+    }
+
+    as_object_mut(op).remove("x-ms-examples");
+
+    if !path_params.is_null() {
+        as_object_mut(path).insert("parameters".into(), path_params);
+    }
+}
+
+/// Attach example parameter values to the matching op or path parameters.
+fn apply_example_parameters(
+    op: &mut Value,
+    path_params: &mut Value,
+    example_name: &str,
+    example: &Value,
+    openapi: &Value,
+) {
+    let Some(params) = example.get("parameters").and_then(Value::as_object) else {
+        return;
+    };
+    for (pname, value) in params {
+        let op_len = op
+            .get("parameters")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        for i in 0..op_len {
+            if let Some(target) = op.get_mut("parameters").and_then(|a| a.get_mut(i)) {
+                set_param_example(target, pname, example_name, value, openapi);
+            }
+        }
+        let path_len = path_params.as_array().map(Vec::len).unwrap_or(0);
+        for i in 0..path_len {
+            if let Some(target) = path_params.get_mut(i) {
+                set_param_example(target, pname, example_name, value, openapi);
+            }
+        }
+    }
+}
+
+/// Set `param.examples[name] = {value}` when the param matches and has no
+/// inline example. Resolves a `$ref` target inside the document.
+fn set_param_example(
+    param: &mut Value,
+    pname: &str,
+    example_name: &str,
+    value: &Value,
+    openapi: &Value,
+) {
+    let matches_name = if let Some(ref_str) = param.get("$ref").and_then(Value::as_str) {
+        jptr::get(openapi, ref_str)
+            .and_then(|t| get_str(t, "name"))
+            .map(|n| n == pname)
+            .unwrap_or(false)
+    } else {
+        get_str(param, "name") == Some(pname)
+    };
+    if !matches_name || param.get("example").is_some() {
+        return;
+    }
+    as_object_mut(param)
+        .entry("examples")
+        .or_insert_with(empty_object);
+    if let Some(examples) = param.get_mut("examples") {
+        let mut wrapped = Map::new();
+        wrapped.insert("value".into(), value.clone());
+        as_object_mut(examples).insert(example_name.to_string(), Value::Object(wrapped));
+    }
+}
+
+/// Attach example response headers and bodies.
+fn apply_example_responses(
+    op: &mut Value,
+    example_name: &str,
+    se: &str,
+    example: &Value,
+    openapi: &mut Value,
+) {
+    let Some(responses) = example.get("responses").and_then(Value::as_object) else {
+        return;
+    };
+    for (r, resp) in responses {
+        // Headers: header.example = value.
+        if let Some(headers) = resp.get("headers").and_then(Value::as_object) {
+            for (h, value) in headers {
+                let target = op
+                    .get_mut("responses")
+                    .and_then(|rs| rs.get_mut(r.as_str()))
+                    .and_then(|resp| resp.get_mut("headers"))
+                    .and_then(|hs| hs.get_mut(h.as_str()));
+                if let Some(header) = target {
+                    as_object_mut(header).insert("example".into(), value.clone());
+                }
+            }
+        }
+        // Body: into components.examples and referenced from each content type.
+        if let Some(body) = resp.get("body") {
+            let mut wrapped = Map::new();
+            wrapped.insert("value".into(), body.clone());
+            set_component_example(openapi, se, Value::Object(wrapped));
+
+            let content_types: Vec<String> = op
+                .get("responses")
+                .and_then(|rs| rs.get(r.as_str()))
+                .and_then(|resp| resp.get("content"))
+                .and_then(Value::as_object)
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default();
+            for ct in content_types {
+                let target = op
+                    .get_mut("responses")
+                    .and_then(|rs| rs.get_mut(r.as_str()))
+                    .and_then(|resp| resp.get_mut("content"))
+                    .and_then(|c| c.get_mut(&ct));
+                if let Some(content_type) = target {
+                    as_object_mut(content_type)
+                        .entry("examples")
+                        .or_insert_with(empty_object);
+                    if let Some(examples) = content_type.get_mut("examples") {
+                        let mut ref_obj = Map::new();
+                        ref_obj.insert(
+                            "$ref".into(),
+                            Value::String(format!("#/components/examples/{se}")),
+                        );
+                        as_object_mut(examples)
+                            .insert(example_name.to_string(), Value::Object(ref_obj));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Insert a value under `components.examples`, creating the bucket.
+fn set_component_example(openapi: &mut Value, key: &str, value: Value) {
+    as_object_mut(openapi)
+        .entry("components")
+        .or_insert_with(empty_object);
+    if let Some(components) = openapi.get_mut("components") {
+        as_object_mut(components)
+            .entry("examples")
+            .or_insert_with(empty_object);
+        if let Some(examples) = components.get_mut("examples") {
+            as_object_mut(examples).insert(key.to_string(), value);
+        }
+    }
 }
 
 // --- main conversion core ------------------------------------------------
@@ -2210,7 +2376,7 @@ fn process_component_parameters(
             Some(v) => v.clone(),
             None => continue,
         };
-        process_parameter(&mut param, None, None, &sname, openapi, &consumes, options)?;
+        process_parameter(&mut param, None, &sname, openapi, &consumes, options)?;
         if let Some(slot) = openapi
             .get_mut("components")
             .and_then(|c| c.get_mut("parameters"))
@@ -2346,7 +2512,7 @@ fn extract_shared_request_bodies(openapi: &mut Value, cache: &RbCache, options: 
 
         if let Some(components) = openapi.get_mut("components") {
             if let Some(bodies) = components.get_mut("requestBodies") {
-                as_object_mut(bodies).insert(final_name.clone(), clone(&entry.body));
+                as_object_mut(bodies).insert(final_name.clone(), entry.body.clone());
             }
         }
         for ptr in &entry.refs {
@@ -2617,6 +2783,11 @@ pub fn convert_obj(swagger: &Value, options: &mut Options) -> Result<(), S2OErro
         swagger.clone()
     };
 
+    // Record the YAML form of the input when no entry point set it already.
+    if options.text.is_empty() {
+        options.text = crate::yaml::stringify(&swagger);
+    }
+
     options.patches = 0;
 
     // Reject YAML anchors unless allowed.
@@ -2627,7 +2798,7 @@ pub fn convert_obj(swagger: &Value, options: &mut Options) -> Result<(), S2OErro
     // OAS3 pass-through.
     if let Some(v) = swagger.get("openapi").and_then(Value::as_str) {
         if v.starts_with("3.") {
-            let mut openapi = clone(&swagger);
+            let mut openapi = swagger.clone();
             fix_info(&mut openapi, options)?;
             fix_paths(&mut openapi, options)?;
             options.openapi = openapi;
@@ -2681,7 +2852,7 @@ pub fn convert_obj(swagger: &Value, options: &mut Options) -> Result<(), S2OErro
     // Copy swagger members in, keeping openapi first.
     if let Some(map) = swagger.as_object() {
         for (k, v) in map {
-            as_object_mut(&mut openapi).insert(k.clone(), clone(v));
+            as_object_mut(&mut openapi).insert(k.clone(), v.clone());
         }
     }
     as_object_mut(&mut openapi).remove("swagger");
@@ -2695,6 +2866,8 @@ pub fn convert_obj(swagger: &Value, options: &mut Options) -> Result<(), S2OErro
         let v = as_object_mut(&mut openapi).remove("x-servers").unwrap();
         as_object_mut(&mut openapi).insert("servers".into(), v);
     }
+
+    build_parameterized_host(&mut openapi, &swagger);
 
     fix_info(&mut openapi, options)?;
     fix_paths(&mut openapi, options)?;
@@ -2729,19 +2902,19 @@ fn is_swagger_two(value: Option<&Value>) -> bool {
 }
 
 /// Delete null members, sparing extensions, `default`, and example paths.
+///
+/// On an object the key is removed. On an array the slot is left as `null`
+/// rather than spliced out. This matches `delete arr[i]`, which leaves a hole
+/// the later indices keep their positions and the hole serializes back to
+/// `null`. Compacting the array would shift the indices the traversal already
+/// collected and drop the wrong elements.
 fn strip_nulls(openapi: &mut Value) {
-    recurse(openapi, "#", 0, &mut |obj, key, state| {
+    recurse(openapi, "#", &mut |obj, key, state| {
         let is_null = obj.get(key) == Some(&Value::Null);
         if is_null && !key.starts_with("x-") && key != "default" && !state.path.contains("/example")
         {
             if let Some(map) = obj.as_object_mut() {
                 map.remove(key);
-            } else if let Some(arr) = obj.as_array_mut() {
-                if let Ok(i) = key.parse::<usize>() {
-                    if i < arr.len() {
-                        arr.remove(i);
-                    }
-                }
             }
         }
     });
@@ -2797,6 +2970,127 @@ fn push_server(openapi: &mut Value, server: Value) {
     if let Some(Value::Array(arr)) = openapi.get_mut("servers") {
         arr.push(server);
     }
+}
+
+/// Build a server from an Azure `x-ms-parameterized-host` block.
+///
+/// The host template plus the base path becomes `server.url`. Each named
+/// parameter moves under `server.variables` keyed by its name. The block is
+/// removed from the output. With `useSchemePrefix === false` the server is
+/// pushed once. Otherwise one server is pushed per scheme with the scheme
+/// prepended to the URL.
+fn build_parameterized_host(openapi: &mut Value, swagger: &Value) {
+    let Some(host) = swagger.get("x-ms-parameterized-host").cloned() else {
+        return;
+    };
+    let host_template = get_str(&host, "hostTemplate").unwrap_or("");
+    let base_path = swagger
+        .get("basePath")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let url = format!("{host_template}{base_path}");
+    let param_names = match_brace_tokens(&url);
+
+    let mut variables = Map::new();
+    if let Some(params) = host.get("parameters").and_then(Value::as_object) {
+        for (idx, (msp, raw)) in params.iter().enumerate() {
+            build_host_variable(openapi, msp, idx, raw, &param_names, &mut variables);
+        }
+    } else if let Some(params) = host.get("parameters").and_then(Value::as_array) {
+        for (idx, raw) in params.iter().enumerate() {
+            build_host_variable(
+                openapi,
+                &idx.to_string(),
+                idx,
+                raw,
+                &param_names,
+                &mut variables,
+            );
+        }
+    }
+
+    let mut server = Map::new();
+    server.insert("url".into(), Value::String(url.clone()));
+    server.insert("variables".into(), Value::Object(variables));
+    let server = Value::Object(server);
+
+    let scheme_prefix = host.get("useSchemePrefix").and_then(Value::as_bool);
+    if scheme_prefix == Some(false) {
+        push_server(openapi, server);
+    } else if let Some(schemes) = swagger.get("schemes").and_then(Value::as_array) {
+        for scheme in schemes {
+            let scheme = scheme.as_str().unwrap_or("");
+            let mut copy = server.as_object().cloned().unwrap_or_default();
+            copy.insert("url".into(), Value::String(format!("{scheme}://{url}")));
+            push_server(openapi, Value::Object(copy));
+        }
+    }
+
+    as_object_mut(openapi).remove("x-ms-parameterized-host");
+}
+
+/// Resolve one parameterized-host parameter and record it as a server variable.
+fn build_host_variable(
+    openapi: &Value,
+    msp: &str,
+    idx: usize,
+    raw: &Value,
+    param_names: &[String],
+    variables: &mut Map<String, Value>,
+) {
+    if msp.starts_with("x-") {
+        return;
+    }
+    let mut param = match raw.get("$ref").and_then(Value::as_str) {
+        Some(ref_str) => jptr::get(openapi, ref_str)
+            .cloned()
+            .unwrap_or_else(empty_object),
+        None => raw.clone(),
+    };
+    let pmap = as_object_mut(&mut param);
+    pmap.remove("required");
+    pmap.remove("type");
+    pmap.remove("in");
+    if pmap.get("default").is_none() {
+        let default = pmap
+            .get("enum")
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .cloned()
+            .unwrap_or_else(|| Value::String("none".into()));
+        pmap.insert("default".into(), default);
+    }
+    let name = match pmap.get("name").and_then(Value::as_str) {
+        Some(n) => n.to_string(),
+        None => param_names
+            .get(idx)
+            .map(|t| t.replace(['{', '}'], ""))
+            .unwrap_or_default(),
+    };
+    pmap.remove("name");
+    variables.insert(name, param);
+}
+
+/// Collect `{word}` tokens from a URL template in order.
+fn match_brace_tokens(url: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let bytes: Vec<char> = url.chars().collect();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == '{' {
+            let mut j = i + 1;
+            while j < bytes.len() && (bytes[j].is_alphanumeric() || bytes[j] == '_') {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == '}' && j > i + 1 {
+                tokens.push(bytes[i..=j].iter().collect());
+                i = j + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    tokens
 }
 
 /// Relocate top-level Swagger containers under `components`.

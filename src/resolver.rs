@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::clone::clone;
 use crate::error::S2OError;
 use crate::jptr;
 use crate::options::Options;
@@ -63,7 +62,7 @@ fn scan_external_refs(openapi: &Value) -> Vec<ExternalRef> {
     let mut paths: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     let mut doc = openapi.clone();
-    recurse(&mut doc, "#", 0, &mut |obj, key, state| {
+    recurse(&mut doc, "#", &mut |obj, key, state| {
         if is_ref(obj, key) {
             if let Some(Value::String(s)) = obj.get(key) {
                 if !s.starts_with('#') {
@@ -150,7 +149,7 @@ fn resolve_one(options: &mut Options, ext: &ExternalRef, base: &str) -> Result<b
             Some(_) => {}
             None => {
                 resolved_at = Some(ptr.clone());
-                jptr::set(&mut options.openapi, ptr, clone(&data));
+                jptr::set(&mut options.openapi, ptr, data.clone());
             }
         }
     }
@@ -166,7 +165,7 @@ fn resolve_all_internal(obj: &mut Value, context: &Value, attach_point: &str) {
     let mut seen: BTreeMap<String, String> = BTreeMap::new();
     loop {
         let mut changed = false;
-        recurse(obj, "#", 0, &mut |container, key, state| {
+        recurse(obj, "#", &mut |container, key, state| {
             if !is_ref(container, key) {
                 return;
             }
@@ -210,7 +209,7 @@ fn resolve_all_internal(obj: &mut Value, context: &Value, attach_point: &str) {
     }
 
     // Drop the temporary $fixed markers.
-    recurse(obj, "#", 0, &mut |container, key, _| {
+    recurse(obj, "#", &mut |container, key, _| {
         if is_ref(container, key) {
             if let Some(map) = container.as_object_mut() {
                 map.remove("$fixed");
@@ -228,7 +227,7 @@ fn rewrite_nested_external_refs(data: &mut Value, target_file: &Path, base_dir: 
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    recurse(data, "#", 0, &mut |obj, key, _| {
+    recurse(data, "#", &mut |obj, key, _| {
         if !is_ref(obj, key) {
             return;
         }

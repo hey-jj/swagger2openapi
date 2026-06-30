@@ -3,13 +3,18 @@
 //! Each fixture directory under `tests/fixtures/s2o-test` holds a `swagger.yaml`
 //! input and an `openapi.yaml` expected output, plus an optional `options.yaml`.
 //! The test parses both, runs the conversion, and compares the produced
-//! document against the expected one by structural equality.
+//! document against the expected one by structural equality. It lives inside the
+//! crate so it can read fixtures through the internal YAML parser without
+//! widening the public API.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use swagger2openapi::{convert_obj, options::RefSiblings, Options};
+
+use crate::convert::convert_obj;
+use crate::options::{Options, RefSiblings};
+use crate::yaml;
 
 /// Load options from a fixture `options.yaml`, if present.
 fn load_options(dir: &Path) -> (Options, bool) {
@@ -17,7 +22,7 @@ fn load_options(dir: &Path) -> (Options, bool) {
     options.source = Some(dir.join("swagger.yaml").to_string_lossy().into_owned());
     let mut expect_throw = false;
     if let Ok(text) = fs::read_to_string(dir.join("options.yaml")) {
-        let raw: Value = swagger2openapi::yaml::parse(&text).expect("options.yaml parse");
+        let raw: Value = yaml::parse(&text).expect("options.yaml parse");
         if let Some(map) = raw.as_object() {
             if map.get("patch").and_then(Value::as_bool) == Some(true) {
                 options.patch = true;
@@ -58,13 +63,11 @@ fn run_case(dir: &Path) -> Result<(), String> {
         fs::read_to_string(dir.join("swagger.yaml")).map_err(|e| format!("read swagger: {e}"))?;
     let expected_text =
         fs::read_to_string(dir.join("openapi.yaml")).map_err(|e| format!("read openapi: {e}"))?;
-    let swagger: Value =
-        swagger2openapi::yaml::parse(&swagger_text).map_err(|e| format!("parse swagger: {e}"))?;
-    let expected: Value =
-        swagger2openapi::yaml::parse(&expected_text).map_err(|e| format!("parse openapi: {e}"))?;
+    let swagger: Value = yaml::parse(&swagger_text).map_err(|e| format!("parse swagger: {e}"))?;
+    let expected: Value = yaml::parse(&expected_text).map_err(|e| format!("parse openapi: {e}"))?;
 
     let (mut options, expect_throw) = load_options(dir);
-    options.had_anchors = swagger2openapi::yaml::has_alias(&swagger_text);
+    options.had_anchors = yaml::has_alias(&swagger_text);
 
     match convert_obj(&swagger, &mut options) {
         Ok(()) => {

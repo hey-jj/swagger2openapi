@@ -159,6 +159,15 @@ mod tests {
     }
 
     #[test]
+    fn hash_walks_utf16_code_units() {
+        // The hash runs over UTF-16 code units with wrapping i32 arithmetic.
+        // An emoji is a surrogate pair, two code units. A combining-free
+        // accented string still hits the multi-byte path.
+        assert_eq!(hash("\u{1F600}"), 1772899);
+        assert_eq!(hash("café"), 3045921);
+    }
+
+    #[test]
     fn camel_case_drops_separators() {
         assert_eq!(to_camel_case("_body"), "Body");
         assert_eq!(to_camel_case("add-pet item"), "addPetItem");

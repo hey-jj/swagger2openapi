@@ -50,7 +50,9 @@ The converted document lands in `options.openapi`. Errors surface as
 
 ## Options
 
-`Options` carries both inputs and outputs. Common inputs:
+`Options` groups its fields into inputs the caller sets, outputs the converter
+writes, and internal scratch the caller cannot touch. Set the inputs, call an
+entry point, then read `openapi` and the other outputs. Common inputs:
 
 - `patch`: repair small patchable errors instead of returning an error.
 - `warn_only`: write a warning extension instead of erroring on recoverable
