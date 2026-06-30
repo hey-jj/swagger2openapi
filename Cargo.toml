@@ -9,22 +9,10 @@ readme = "README.md"
 keywords = ["swagger", "openapi", "oas", "convert", "spec"]
 categories = ["api-bindings", "encoding", "parsing"]
 
-[features]
-default = ["yaml"]
-# YAML parse and serialize for the string, file, and stream entry points.
-yaml = ["dep:serde_yaml"]
-# External and internal $ref resolution plus the URL entry point.
-resolve = ["dep:reqwest", "dep:tokio"]
-# Marker feature for the hermetic conversion core targeting wasm32.
-wasm = []
-
 [dependencies]
 # preserve_order keeps map insertion order, which the converter and the
 # $ref relocation paths depend on.
 serde_json = { version = "1", features = ["preserve_order"] }
-serde_yaml = { version = "0.9", optional = true }
-reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls"] }
-tokio = { version = "1", optional = true, features = ["rt", "macros"] }
-
-[dev-dependencies]
-libtest-mimic = "0.8"
+# YAML parse and serialize for the string, file, and stream entry points and for
+# reading external $ref targets during resolution.
+serde_yaml = "0.9"

@@ -38,10 +38,68 @@ pub mod recurse;
 pub mod resolver;
 pub mod schema_walker;
 pub mod status_codes;
+pub mod yaml;
 
+pub use convert::convert_obj;
 pub use error::S2OError;
 pub use options::Options;
+
+use serde_json::Value;
 
 /// Default `openapi` version string emitted unless `options.target_version`
 /// overrides it.
 pub const TARGET_VERSION: &str = "3.0.0";
+
+/// Convert a Swagger 2.0 object, an alias for [`convert_obj`].
+///
+/// On success `options.openapi` holds the OpenAPI 3.0 document.
+pub fn convert(swagger: &Value, options: &mut Options) -> Result<(), S2OError> {
+    convert_obj(swagger, options)
+}
+
+/// Convert a JSON or YAML string.
+///
+/// JSON is tried first, then YAML. `options.text` records the source text and
+/// `options.source_yaml` is set when the YAML parser handled the input. A parse
+/// failure for both formats returns an error.
+pub fn convert_str(text: &str, options: &mut Options) -> Result<(), S2OError> {
+    let value = match serde_json::from_str::<Value>(text) {
+        Ok(mut v) => {
+            options.text = serde_json::to_string_pretty(&v).unwrap_or_default();
+            yaml::normalise_numbers(&mut v);
+            v
+        }
+        Err(_) => {
+            let v = yaml::parse_yaml(text)?;
+            options.source_yaml = true;
+            options.text = text.to_string();
+            options.had_anchors = yaml::has_alias(text);
+            v
+        }
+    };
+    convert_obj(&value, options)
+}
+
+/// Convert a document read from a file.
+///
+/// The file is read with UTF-8 unless `options.encoding` overrides it (only
+/// `utf8` is supported). `options.source_file` records the path.
+pub fn convert_file(path: &str, options: &mut Options) -> Result<(), S2OError> {
+    let text = std::fs::read_to_string(path).map_err(|e| S2OError::new(format!("{path}: {e}")))?;
+    options.source_file = Some(path.to_string());
+    convert_str(&text, options)
+}
+
+/// Convert a document read from any reader.
+///
+/// The reader is drained to a string, then handed to [`convert_str`].
+pub fn convert_stream<R: std::io::Read>(
+    mut reader: R,
+    options: &mut Options,
+) -> Result<(), S2OError> {
+    let mut text = String::new();
+    reader
+        .read_to_string(&mut text)
+        .map_err(|e| S2OError::new(e.to_string()))?;
+    convert_str(&text, options)
+}

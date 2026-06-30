@@ -59,6 +59,21 @@ pub struct Options {
     pub openapi: Value,
     /// Count of patches applied.
     pub patches: u64,
+    /// File read encoding. Only `utf8` is supported.
+    pub encoding: Option<String>,
+    /// Textual source recorded during conversion.
+    pub text: String,
+    /// Set when the input parsed as YAML rather than JSON.
+    pub source_yaml: bool,
+    /// The file path passed to the file entry point.
+    pub source_file: Option<String>,
+    /// The `$ref` rewrite map produced during conversion.
+    pub refmap: Value,
+    /// Set by YAML entry points when the source used an anchor and alias.
+    ///
+    /// The converter rejects anchors unless `anchors` is set. The parsed value
+    /// no longer carries the shared identity, so the flag preserves the signal.
+    pub had_anchors: bool,
 }
 
 impl Options {

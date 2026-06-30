@@ -3,6 +3,10 @@
 use std::error::Error;
 use std::fmt;
 
+use serde_json::Value;
+
+use crate::options::Options;
+
 /// The single error type raised by the converter.
 ///
 /// The JavaScript source names this error `S2OError`. The name carries through
@@ -34,3 +38,34 @@ impl fmt::Display for S2OError {
 }
 
 impl Error for S2OError {}
+
+/// Build an error. The name mirrors the throw site in the algorithm.
+pub fn throw_error(message: impl Into<String>) -> S2OError {
+    S2OError::new(message)
+}
+
+/// Either warn into a container or raise an error.
+///
+/// When `warn_only` is set, the message is written into `container` under the
+/// configured warning property and `Ok(())` is returned. Otherwise the message
+/// becomes an error.
+pub fn throw_or_warn(
+    message: impl Into<String>,
+    container: &mut Value,
+    options: &Options,
+) -> Result<(), S2OError> {
+    let message = message.into();
+    if options.warn_only {
+        let prop = if options.warn_property.is_empty() {
+            crate::options::DEFAULT_WARN_PROPERTY.to_string()
+        } else {
+            options.warn_property.clone()
+        };
+        if let Some(map) = container.as_object_mut() {
+            map.insert(prop, Value::String(message));
+        }
+        Ok(())
+    } else {
+        Err(S2OError::new(message))
+    }
+}
