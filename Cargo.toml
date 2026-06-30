@@ -1,0 +1,10 @@
+[package]
+name = "swagger2openapi"
+version = "0.1.0"
+edition = "2021"
+description = "Convert Swagger 2.0 API specs to OpenAPI 3.0"
+license = "MIT"
+repository = "https://github.com/hey-jj/swagger2openapi"
+readme = "README.md"
+
+[dependencies]
