@@ -76,11 +76,15 @@ pub fn convert_str(text: &str, options: &mut Options) -> Result<(), S2OError> {
 
 /// Convert a document read from a file.
 ///
-/// The file is read with UTF-8 unless `options.encoding` overrides it (only
-/// `utf8` is supported). `options.source_file` records the path.
+/// The file is read as UTF-8. `options.source_file` records the path, and
+/// `options.source` is set to the path for `$ref` resolution unless the caller
+/// already supplied a base.
 pub fn convert_file(path: &str, options: &mut Options) -> Result<(), S2OError> {
     let text = std::fs::read_to_string(path).map_err(|e| S2OError::new(format!("{path}: {e}")))?;
     options.source_file = Some(path.to_string());
+    if options.source.is_none() {
+        options.source = Some(path.to_string());
+    }
     convert_str(&text, options)
 }
 

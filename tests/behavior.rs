@@ -52,6 +52,21 @@ fn convert_file_missing_is_error() {
 }
 
 #[test]
+fn convert_file_resolves_refs_without_manual_source() {
+    // resolve=true with a file input must work without the caller setting
+    // options.source. convert_file knows the path and supplies the base.
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/s2o-test/issue39/swagger.yaml"
+    );
+    let mut options = Options::new();
+    options.resolve = true;
+    convert_file(path, &mut options).unwrap();
+    // The external $ref under /test was read and inlined.
+    assert!(options.openapi["paths"]["/test"]["get"]["responses"]["200"].is_object());
+}
+
+#[test]
 fn convert_stream_matches_str() {
     let text = minimal().to_string();
     let mut from_stream = Options::new();
