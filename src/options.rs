@@ -57,10 +57,6 @@ pub struct Options {
     pub source: Option<String>,
     /// Allow YAML anchors and shared object references.
     pub anchors: bool,
-    /// Return the bare `openapi` document instead of the options bag.
-    pub direct: bool,
-    /// File read encoding. Only `utf8` is supported.
-    pub encoding: Option<String>,
 
     // --- outputs: read these after the call returns ---
     /// The converted OpenAPI 3.0 document. This is the conversion result.
