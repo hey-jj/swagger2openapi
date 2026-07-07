@@ -59,20 +59,35 @@ struct RbEntry {
     refs: Vec<String>,
 }
 
-/// Cache keyed by the 32-bit hash of the serialized request body.
+/// One cache entry position inside a hash bucket.
+struct RbKey {
+    hash: i32,
+    index: usize,
+}
+
+/// Cache indexed by the 32-bit hash, then matched by request body content.
 #[derive(Default)]
 struct RbCache {
-    order: Vec<i32>,
-    entries: std::collections::HashMap<i32, RbEntry>,
+    order: Vec<RbKey>,
+    entries: std::collections::HashMap<i32, Vec<RbEntry>>,
 }
 
 impl RbCache {
-    fn get_or_insert(&mut self, key: i32, make: impl FnOnce() -> RbEntry) -> &mut RbEntry {
-        if !self.entries.contains_key(&key) {
-            self.order.push(key);
-            self.entries.insert(key, make());
+    fn get_or_insert(
+        &mut self,
+        hash: i32,
+        body: &Value,
+        make: impl FnOnce() -> RbEntry,
+    ) -> &mut RbEntry {
+        let bucket = self.entries.entry(hash).or_default();
+        if let Some(index) = bucket.iter().position(|entry| entry.body == *body) {
+            return bucket.get_mut(index).unwrap();
         }
-        self.entries.get_mut(&key).unwrap()
+
+        let index = bucket.len();
+        self.order.push(RbKey { hash, index });
+        bucket.push(make());
+        bucket.last_mut().unwrap()
     }
 }
 
@@ -274,13 +289,29 @@ fn fix_param_ref(param: &mut Value, options: &mut Options) -> Result<(), S2OErro
     if let Some(idx) = ref_str.find("#/parameters/") {
         let prefix = &ref_str[..idx];
         let rest = &ref_str[idx + "#/parameters/".len()..];
-        let new = format!("{prefix}#/components/parameters/{}", sanitise(rest));
+        let new = format!(
+            "{prefix}#/components/parameters/{}",
+            sanitise_ref_path(rest)
+        );
         as_object_mut(param).insert("$ref".into(), Value::String(new));
     }
     if ref_str.contains("#/definitions/") {
         warn_or_error("Definition used as parameter", param, options)?;
     }
     Ok(())
+}
+
+/// Decode the first pointer segment before it becomes a component key.
+fn sanitise_ref_path(rest: &str) -> String {
+    let mut segments = rest.split('/');
+    let first = segments.next().unwrap_or("");
+    let first = sanitise(&decode_uri(first));
+    let tail: Vec<&str> = segments.collect();
+    if tail.is_empty() {
+        first
+    } else {
+        format!("{first}/{}", tail.join("/"))
+    }
 }
 
 // --- request body attachment --------------------------------------------
@@ -1156,7 +1187,11 @@ fn compute_produces(
     options: &mut Options,
 ) -> Result<Vec<String>, S2OError> {
     if let Some(o) = op {
-        if matches!(o.get("produces"), Some(Value::String(_))) && !options.patch {
+        if let Some(Value::String(s)) = o.get("produces") {
+            if options.patch {
+                options.patches += 1;
+                return Ok(vec![s.clone()]);
+            }
             return Err(S2OError::new(
                 "(Patchable) operation.produces must be an array",
             ));
@@ -1331,10 +1366,10 @@ fn rewrite_single_ref(
         let new = format!("#/components/schemas/{}", keys.join("/"));
         as_object_mut(container).insert("$ref".into(), Value::String(new));
     } else if let Some(rest) = ref_str.strip_prefix("#/parameters/") {
-        let new = format!("#/components/parameters/{}", sanitise(rest));
+        let new = format!("#/components/parameters/{}", sanitise_ref_path(rest));
         as_object_mut(container).insert("$ref".into(), Value::String(new));
     } else if let Some(rest) = ref_str.strip_prefix("#/responses/") {
-        let new = format!("#/components/responses/{}", sanitise(rest));
+        let new = format!("#/components/responses/{}", sanitise_ref_path(rest));
         as_object_mut(container).insert("$ref".into(), Value::String(new));
     } else if ref_str.starts_with('#') {
         relocate_ref(openapi, container, ref_str, site, refmap, options)?;
@@ -1654,12 +1689,7 @@ fn process_operation(
     options: &mut Options,
 ) -> Result<(), S2OError> {
     // Merge applicable path-level parameters into the operation.
-    let has_op_params = path
-        .get(method)
-        .and_then(|o| o.get("parameters"))
-        .map(Value::is_array)
-        .unwrap_or(false);
-    if has_op_params && path.get("parameters").is_some() {
+    if path.get("parameters").is_some() {
         let path_params = path
             .get("parameters")
             .and_then(Value::as_array)
@@ -1946,7 +1976,7 @@ fn finalize_operation(
         let rb_str = serde_json::to_string(&rb).unwrap_or_default();
         let rb_hash = hash(&rb_str);
         let body = rb.clone();
-        cache.get_or_insert(rb_hash, || RbEntry {
+        let entry = cache.get_or_insert(rb_hash, &rb, || RbEntry {
             name: rb_name,
             body,
             refs: Vec::new(),
@@ -1955,7 +1985,7 @@ fn finalize_operation(
             "#/{container_name}/{}/{method}/requestBody",
             encode_uri_component(&jpescape(p))
         );
-        cache.entries.get_mut(&rb_hash).unwrap().refs.push(ptr);
+        entry.refs.push(ptr);
     }
     Ok(())
 }
@@ -2396,15 +2426,12 @@ fn seed_existing_request_bodies(openapi: &Value, cache: &mut RbCache) {
     for (name, rb) in bodies {
         let rb_str = serde_json::to_string(&rb).unwrap_or_default();
         let rb_hash = hash(&rb_str);
-        cache.order.push(rb_hash);
-        cache.entries.insert(
-            rb_hash,
-            RbEntry {
-                name,
-                body: rb,
-                refs: Vec::new(),
-            },
-        );
+        let body = rb.clone();
+        cache.get_or_insert(rb_hash, &rb, || RbEntry {
+            name,
+            body,
+            refs: Vec::new(),
+        });
     }
 }
 
@@ -2442,7 +2469,7 @@ fn extract_shared_request_bodies(openapi: &mut Value, cache: &RbCache, options: 
     let mut generated: Vec<String> = Vec::new();
     let mut counter = 1u64;
     for key in &cache.order {
-        let entry = &cache.entries[key];
+        let entry = &cache.entries[&key.hash][key.index];
         if entry.refs.len() <= 1 {
             continue;
         }
@@ -3091,4 +3118,192 @@ fn build_components(openapi: &mut Value) {
     m.remove("responses");
     m.remove("parameters");
     m.remove("securityDefinitions");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn convert(input: Value) -> Options {
+        let mut options = Options::new();
+        convert_obj(&input, &mut options).unwrap();
+        options
+    }
+
+    #[test]
+    fn request_body_cache_keeps_hash_collisions_distinct() {
+        let options = convert(json!({
+            "swagger": "2.0",
+            "info": { "title": "Demo", "version": "1.0.0" },
+            "paths": {
+                "/aa": {
+                    "post": {
+                        "operationId": "create",
+                        "parameters": [
+                            {
+                                "name": "payload",
+                                "in": "body",
+                                "schema": {
+                                    "description": "Aa",
+                                    "type": "object"
+                                }
+                            }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                },
+                "/bb": {
+                    "post": {
+                        "operationId": "create",
+                        "parameters": [
+                            {
+                                "name": "payload",
+                                "in": "body",
+                                "schema": {
+                                    "description": "BB",
+                                    "type": "object"
+                                }
+                            }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        }));
+
+        let aa = &options.openapi["paths"]["/aa"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["description"];
+        let bb = &options.openapi["paths"]["/bb"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["description"];
+        assert_eq!(aa, "Aa");
+        assert_eq!(bb, "BB");
+        assert!(options.openapi["components"].get("requestBodies").is_none());
+    }
+
+    #[test]
+    fn parameter_ref_decodes_segment_before_sanitise() {
+        let options = convert(json!({
+            "swagger": "2.0",
+            "info": { "title": "Demo", "version": "1.0.0" },
+            "parameters": {
+                "a b": {
+                    "name": "a b",
+                    "in": "query",
+                    "type": "string"
+                }
+            },
+            "paths": {
+                "/p": {
+                    "get": {
+                        "parameters": [
+                            { "$ref": "#/parameters/a%20b" }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        }));
+
+        assert_eq!(
+            options.openapi["paths"]["/p"]["get"]["parameters"][0]["$ref"],
+            "#/components/parameters/a_b"
+        );
+    }
+
+    #[test]
+    fn response_ref_decodes_segment_before_sanitise() {
+        let options = convert(json!({
+            "swagger": "2.0",
+            "info": { "title": "Demo", "version": "1.0.0" },
+            "responses": {
+                "a b": { "description": "ok" }
+            },
+            "paths": {
+                "/p": {
+                    "get": {
+                        "responses": {
+                            "200": { "$ref": "#/responses/a%20b" }
+                        }
+                    }
+                }
+            }
+        }));
+
+        assert_eq!(
+            options.openapi["paths"]["/p"]["get"]["responses"]["200"]["$ref"],
+            "#/components/responses/a_b"
+        );
+    }
+
+    #[test]
+    fn fix_param_ref_decodes_segment_before_sanitise() {
+        let mut options = Options::new();
+        let mut param = json!({ "$ref": "./defs.json#/parameters/a%20b" });
+        fix_param_ref(&mut param, &mut options).unwrap();
+
+        assert_eq!(param["$ref"], "./defs.json#/components/parameters/a_b");
+    }
+
+    #[test]
+    fn path_body_parameter_creates_operation_request_body() {
+        let options = convert(json!({
+            "swagger": "2.0",
+            "info": { "title": "Demo", "version": "1.0.0" },
+            "paths": {
+                "/p": {
+                    "parameters": [
+                        {
+                            "name": "payload",
+                            "in": "body",
+                            "schema": { "type": "object" }
+                        }
+                    ],
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        }));
+
+        assert!(options.openapi["paths"]["/p"]["get"]["requestBody"].is_object());
+        assert_eq!(
+            options.openapi["paths"]["/p"]["parameters"]
+                .as_array()
+                .map(Vec::len),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn patch_string_operation_produces_sets_response_content() {
+        let mut options = Options::new();
+        options.patch = true;
+        convert_obj(
+            &json!({
+                "swagger": "2.0",
+                "info": { "title": "Demo", "version": "1.0.0" },
+                "paths": {
+                    "/p": {
+                        "get": {
+                            "produces": "application/json",
+                            "responses": {
+                                "200": {
+                                    "description": "ok",
+                                    "schema": { "type": "object" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }),
+            &mut options,
+        )
+        .unwrap();
+
+        let content = &options.openapi["paths"]["/p"]["get"]["responses"]["200"]["content"];
+        assert!(content["application/json"].is_object());
+        assert!(content.get("*/*").is_none());
+        assert_eq!(options.patches, 1);
+    }
 }
