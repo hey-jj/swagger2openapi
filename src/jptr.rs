@@ -41,10 +41,9 @@ fn components(prop: &str) -> Result<Option<Vec<String>>, ()> {
             return Err(()); // internal resolution only
         }
         let frag = parts.next().unwrap_or("");
-        // frag includes the leading '/', drop it then decode '+' to space and
-        // percent-decode the remainder.
+        // frag includes the leading '/', drop it then percent-decode the remainder.
         let after_hash = frag.strip_prefix('/').unwrap_or(frag);
-        prop = decode_uri_component(&after_hash.replace('+', " "));
+        prop = decode_uri_component(after_hash);
     }
 
     let prop = prop.strip_prefix('/').unwrap_or(&prop);
@@ -287,6 +286,16 @@ mod tests {
         assert_eq!(get(&doc, "#/g%7Ch"), Some(&json!(4)));
         assert_eq!(get(&doc, "#/%20"), Some(&json!(7)));
         assert_eq!(get(&doc, "#/m~0n"), Some(&json!(8)));
+    }
+
+    #[test]
+    fn json_reference_fragment_keeps_plus_literal() {
+        let doc = json!({
+            "A+B": { "type": "string" },
+            "A B": { "type": "number" }
+        });
+
+        assert_eq!(get(&doc, "#/A+B/type"), Some(&json!("string")));
     }
 
     #[test]
